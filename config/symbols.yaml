@@ -1,0 +1,9 @@
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - BNBUSDT
+interval: 1m
+years: [2022, 2023, 2024]   # ajusta à vontade
+feature_horizon: 10         # H do label (passo futuro)
+quantile_q: 0.62            # balanceamento de classes (quantis)
+source: mainnet             # não mexas (histórico público)
