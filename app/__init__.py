@@ -1,0 +1,1 @@
+"""App package initializer (intentionally minimal for linters)."""
