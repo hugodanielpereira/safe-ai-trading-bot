@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import csv
+import json
+import os
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, status, Query
 from fastapi.responses import HTMLResponse
@@ -32,47 +35,185 @@ class StatusResponse(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    # f-string + chaves JS escapadas ({{ }})
-    return f"""
+    return """
     <html>
-      <head><title>AI Bot Starter</title></head>
-      <body style='font-family:system-ui;margin:2rem;'>
-        <h1>AI Bot Starter (v{settings.bot_version})</h1>
-        <p>Two functions only: <b>Start</b> and <b>Stop</b>. Token protected.</p>
-        <div style='display:flex;gap:1rem'>
-          <form onsubmit="start();return false;">
-            <input id='token' placeholder='X-API-Token' />
-            <button type='submit'>Start</button>
-          </form>
-          <form onsubmit="stop();return false;">
-            <input id='token2' placeholder='X-API-Token' />
-            <button type='submit'>Stop</button>
-          </form>
-          <button onclick='status()'>Refresh status</button>
-          <button onclick='logs()'>Load logs</button>
+    <head>
+      <title>AI Bot Starter</title>
+      <meta charset="utf-8"/>
+      <style>
+        :root {{ --bg:#0b0b0b; --fg:#eaeaea; --muted:#9aa0a6; --accent:#00d4ff; }}
+        body {{ font-family: system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial; margin:24px; background:var(--bg); color:var(--fg); }}
+        h1 {{ margin: 0 0 8px 0; font-weight:700; }}
+        .row {{ display:flex; gap:12px; flex-wrap:wrap; align-items:center; }}
+        input, button {{ padding:8px 10px; background:#141414; color:var(--fg); border:1px solid #222; border-radius:8px; }}
+        button {{ cursor:pointer; }}
+        .card {{ background:#0f0f0f; border:1px solid #1b1b1b; border-radius:12px; padding:14px; margin-top:12px; }}
+        pre {{ background:#111; color:#0f0; padding:12px; border-radius:8px; overflow:auto; max-height:40vh; }}
+        table {{ width:100%; border-collapse: collapse; margin-top:8px; }}
+        th, td {{ padding:8px 10px; border-bottom:1px solid #1f1f1f; text-align:left; }}
+        th {{ color:var(--muted); cursor:pointer; user-select:none; }}
+        tr:hover {{ background:#151515; }}
+        .muted {{ color:var(--muted); }}
+        .pill {{ background:#151515; border:1px solid #222; padding:4px 8px; border-radius:999px; font-size:12px; color:var(--muted); }}
+        #chart {{ width:100%; height:240px; }}
+      </style>
+    </head>
+    <body>
+      <h1>AI Bot Starter <span class="pill">v{settings.bot_version}</span></h1>
+      <p class="muted">Arranque/Paragem + Tabela de comparação de modelos treinados (multi-símbolo).</p>
+
+      <div class="card">
+        <div class="row">
+          <input id="token" placeholder="X-API-Token" value="" />
+          <button onclick='start()'>Start</button>
+          <button onclick='stop()'>Stop</button>
+          <button onclick='status()'>Status</button>
+          <button onclick='logs()'>Logs</button>
+          <button onclick='loadMetrics()' style="margin-left:auto">Carregar métricas</button>
         </div>
-        <pre id='out' style='margin-top:1rem;background:#111;color:#0f0;padding:1rem;'></pre>
-        <script>
-          async function start(){{ 
-            const t=document.getElementById('token').value;
-            const r=await fetch('/start',{{method:'POST',headers:{{'X-API-Token':t}}}});
-            document.getElementById('out').textContent=await r.text();
+        <pre id="out"></pre>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 6px 0;">Comparação de modelos treinados</h3>
+        <div class="muted">Fonte: <code>models/metrics_summary.csv</code> via <code>/metrics</code></div>
+        <div id="metricsWrap">
+          <table id="metricsTable">
+            <thead>
+              <tr>
+                <th onclick="sortBy('symbol')">symbol</th>
+                <th onclick="sortBy('interval')">interval</th>
+                <th onclick="sortBy('rows')">rows</th>
+                <th onclick="sortBy('cv_accuracy')">cv_accuracy</th>
+                <th>model_path</th>
+              </tr>
+            </thead>
+            <tbody id="metricsBody"></tbody>
+          </table>
+        </div>
+        <div id="emptyMsg" class="muted" style="display:none; margin-top:8px;">Sem métricas ainda. Corre <code>make train-multi</code> ou <code>make retrain-multi</code>.</div>
+      </div>
+
+      <div class="card" id="detailCard" style="display:none;">
+        <h3 id="detailTitle" style="margin:0 0 6px 0;">Detalhe</h3>
+        <div id="detailMeta" class="muted"></div>
+        <canvas id="chart"></canvas>
+        <div id="detailJson" style="margin-top:8px;"></div>
+      </div>
+
+      <script>
+        const $ = (id)=>document.getElementById(id);
+        function api(path, opts={{}}){
+          const t = $('token').value.trim();
+          const headers = Object.assign({ 'Content-Type':'application/json' }, t ? {{'X-API-Token': t}} : {});
+          return fetch(path, Object.assign({ headers }, opts));
+        }
+
+        async function start(){ const r = await api('/start', {{method:'POST'}}); $('out').textContent = await r.text(); }
+        async function stop(){ const r = await api('/stop', {{method:'POST'}}); $('out').textContent = await r.text(); }
+        async function status(){ const r = await api('/status'); $('out').textContent = await r.text(); }
+        async function logs(){ const r = await api('/logs'); $('out').textContent = await r.text(); }
+
+        let metrics = [];
+        let sortKey = 'cv_accuracy';
+        let sortAsc = false;
+
+        function renderTable(){
+          const body = $('metricsBody');
+          body.innerHTML = '';
+          if(!metrics.length){ $('emptyMsg').style.display='block'; return; }
+          $('emptyMsg').style.display='none';
+          const rows = metrics.slice().sort((a,b)=>{
+            const ak=a[sortKey], bk=b[sortKey];
+            if(ak===bk) return 0;
+            if(typeof ak==='number' && typeof bk==='number') return sortAsc? ak-bk : bk-ak;
+            return sortAsc? (''+ak).localeCompare(''+bk) : (''+bk).localeCompare(''+ak);
+          });
+          for(const r of rows){
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td><a href="#" onclick="loadDetail('${r.symbol}');return false;">${r.symbol}</a></td>
+              <td>${r.interval||''}</td>
+              <td>${r.rows||0}</td>
+              <td>${(r.cv_accuracy??0).toFixed(4)}</td>
+              <td><code>${r.model_path||''}</code></td>
+            `;
+            body.appendChild(tr);
+          }
+        }
+
+        function sortBy(key){
+          if(sortKey===key) sortAsc=!sortAsc; else {{sortKey=key; sortAsc=true;}}
+          renderTable();
+        }
+
+        async function loadMetrics(){
+          $('detailCard').style.display='none';
+          $('out').textContent = 'A carregar métricas...';
+          try{
+            const r = await api('/metrics');
+            const data = await r.json();
+            metrics = (data && data.summary) ? data.summary : [];
+            $('out').textContent = JSON.stringify(metrics, null, 2);
+            renderTable();
+          }catch(e){
+            $('out').textContent = 'Erro a carregar métricas: '+e;
+          }
+        }
+
+        async function loadDetail(symbol){
+          $('detailCard').style.display='block';
+          $('detailTitle').textContent = `Detalhe: ${symbol}`;
+          $('detailMeta').textContent = 'A carregar...';
+          $('detailJson').textContent = '';
+          try{
+            const r = await api('/metrics?symbol='+encodeURIComponent(symbol));
+            const d = await r.json();
+            $('detailMeta').textContent = `cv_accuracy=${(d.cv_accuracy??0).toFixed(4)}`;
+            // desenhar top features (se existirem)
+            if(d.top_features && d.top_features.length){ drawBarChart(d.top_features.slice(0,15)); }
+            else {{ clearChart(); }}
+            $('detailJson').textContent = JSON.stringify(d, null, 2);
+          }catch(e){
+            $('detailMeta').textContent = 'Erro a carregar detalhe: '+e;
+          }
+        }
+
+        let chartCtx=null;
+        function clearChart(){ const c=$('chart'); const ctx=c.getContext('2d'); ctx.clearRect(0,0,c.width,c.height); }
+        function drawBarChart(items){
+          const c=$('chart'); const ctx=c.getContext('2d');
+          // resize canvas ao container
+          const wrapWidth = c.parentElement.clientWidth||800;
+          c.width = wrapWidth; c.height = 260;
+          ctx.clearRect(0,0,c.width,c.height);
+          const labels = items.map(x=>x.feature);
+          const values = items.map(x=>x.importance||0);
+          const max = Math.max(1, ...values);
+          const pad=30, w=c.width-pad*2, h=c.height-pad*2;
+          const barGap=6;
+          const barW = Math.max(4, Math.floor((w - (values.length-1)*barGap)/values.length));
+          // eixo
+          ctx.strokeStyle='#333'; ctx.lineWidth=1;
+          ctx.beginPath(); ctx.moveTo(pad, pad); ctx.lineTo(pad, pad+h); ctx.lineTo(pad+w, pad+h); ctx.stroke();
+          // barras
+          for(let i=0;i<values.length;i++){{
+            const x = pad + i*(barW+barGap);
+            const bh = Math.round((values[i]/max)*h);
+            const y = pad + (h - bh);
+            ctx.fillStyle = '#00d4ff';
+            ctx.fillRect(x, y, barW, bh);
           }}
-          async function stop(){{ 
-            const t=document.getElementById('token2').value;
-            const r=await fetch('/stop',{{method:'POST',headers:{{'X-API-Token':t}}}});
-            document.getElementById('out').textContent=await r.text();
+          // rótulos (top 10 apenas p/ não poluir)
+          ctx.fillStyle='#9aa0a6'; ctx.font='11px system-ui';
+          for(let i=0;i<Math.min(10,labels.length);i++){{
+            const x = pad + i*(barW+barGap) + Math.max(0, barW-80)/2;
+            ctx.save(); ctx.translate(x, pad+h+12); ctx.rotate(-Math.PI/6);
+            ctx.fillText(labels[i], 0, 0); ctx.restore();
           }}
-          async function status(){{ 
-            const r=await fetch('/status');
-            document.getElementById('out').textContent=await r.text();
-          }}
-          async function logs(){{ 
-            const r=await fetch('/logs');
-            document.getElementById('out').textContent=await r.text();
-          }}
-        </script>
-      </body>
+        }
+      </script>
+    </body>
     </html>
     """
 
@@ -180,6 +321,66 @@ async def config():
         "symbol": b.symbol,
         "qty": b.qty,
     }
+
+def _read_metrics_summary(path: str = "models/metrics_summary.csv"):
+    if not os.path.exists(path):
+        return []
+    rows = []
+    with open(path, "r", newline="") as f:
+        reader = csv.DictReader(f)
+        for r in reader:
+            # normaliza tipos
+            r["rows"] = int(r.get("rows", 0) or 0)
+            try:
+                r["cv_accuracy"] = float(r.get("cv_accuracy", 0) or 0)
+            except Exception:
+                r["cv_accuracy"] = 0.0
+            rows.append(r)
+    # ordena por melhor accuracy desc
+    rows.sort(key=lambda x: x.get("cv_accuracy", 0), reverse=True)
+    return rows
+
+def _read_symbol_detail(symbol: str):
+    meta_path = f"models/metrics_{symbol}.json"
+    fi_path = f"models/feature_importances_{symbol}.csv"
+    detail = {"symbol": symbol}
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r") as f:
+                detail.update(json.load(f))
+        except Exception as e:
+            detail["error_meta"] = str(e)
+    if os.path.exists(fi_path):
+        try:
+            top = []
+            with open(fi_path, "r", newline="") as f:
+                reader = csv.reader(f)
+                for i, row in enumerate(reader):
+                    # ficheiro gerado pelo pandas: "feature,importance"
+                    if i == 0 and row and row[0] == "0":
+                        # fallback raro; ignora header estranho
+                        pass
+                    if len(row) >= 2:
+                        try:
+                            top.append({"feature": row[0], "importance": float(row[1])})
+                        except Exception:
+                            pass
+                    if len(top) >= 25:
+                        break
+            detail["top_features"] = top
+        except Exception as e:
+            detail["error_features"] = str(e)
+    return detail
+
+@app.get("/metrics")
+async def metrics(symbol: Optional[str] = None, _: None = Depends(verify_token)):
+    """
+    - Sem query: devolve comparação de todos os símbolos (summary).
+    - Com ?symbol=BTCUSDT: devolve detalhes desse símbolo (metrics + top features).
+    """
+    if symbol:
+        return _read_symbol_detail(symbol)
+    return {"summary": _read_metrics_summary()}
 
 @app.get("/logs")
 async def logs():
