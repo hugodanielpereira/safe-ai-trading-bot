@@ -22,3 +22,22 @@
 - “Paste required amount”: DO NOT deposit funds into unknown scripts. Keep this bot on public/test data until you integrate a reputable API in code.
 - “Cloud upload”: Docker image → run on server/VPS.
 ========================================================================== */
+
+/* ======================== HOW TO RUN (AI) ========================
+1) Fetch dados (testnet spot, 1m, 1000 candles):
+   python scripts/fetch_klines.py --symbol BTCUSDT --interval 1m --limit 1000 --outfile data/klines.csv --testnet
+
+2) Gerar features + labels (horizon=10):
+   python scripts/make_features.py --klines data/klines.csv --outfile data/features.csv --horizon 10
+
+3) Treinar LightGBM e guardar modelo:
+   python scripts/train_lightgbm.py --features data/features.csv --model_out models/gbm.pkl
+
+4) Ativar AI no runtime (no .env):
+   USE_AI=true
+   MODEL_PATH=models/gbm.pkl
+   BUY_THRESHOLD=0.55
+   SELL_THRESHOLD=0.55
+
+5) Reiniciar API e ver logs a emitir sinais por IA.
+================================================================== */
