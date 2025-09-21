@@ -1,0 +1,30 @@
+{
+  "symbol": "BTCUSDT",
+  "interval": "1m",
+  "algo": "gbm",
+  "params": {},
+  "features": [
+    "ret1",
+    "ret5",
+    "ret15",
+    "vol",
+    "rsi14",
+    "atr14",
+    "sma9",
+    "sma21"
+  ],
+  "rows_total": 1048240,
+  "lookahead": 1,
+  "neutral_band_bps": 5.0,
+  "val_metrics": {
+    "accuracy": 0.8029840494543234,
+    "precision_macro": 0.539829402494899,
+    "recall_macro": 0.35678721758421156,
+    "roc_auc_macro": 0.7047701876571052
+  },
+  "classes_": [
+    0,
+    1,
+    2
+  ]
+}

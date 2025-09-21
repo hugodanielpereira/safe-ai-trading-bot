@@ -26,5 +26,7 @@ class Settings(BaseModel):
     buy_threshold: float = float(os.getenv("BUY_THRESHOLD", "0.55"))
     sell_threshold: float = float(os.getenv("SELL_THRESHOLD", "0.55"))
     feature_horizon: int = int(os.getenv("FEATURE_HORIZON", "10"))
+    cooldown_seconds: int = int(os.getenv("COOLDOWN_SECONDS", "60"))
+    min_proba_gap: float = float(os.getenv("MIN_PROBA_GAP", "0.10"))
 
 settings = Settings()

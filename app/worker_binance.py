@@ -1,11 +1,16 @@
-# app/worker_binance.py
 from __future__ import annotations
-import asyncio
+import asyncio, time
 from typing import Optional
 from rich.console import Console
+
 from .config import settings
 from .exchanges.binance import BinanceBridge
-from .signals import ai_signal, sma_crossover_signal, make_features, load_model, _model_cols
+from .signals import (
+    ai_signal_with_proba,
+    sma_crossover_signal,
+    load_model,
+    current_model_info,
+)
 
 console = Console()
 
@@ -17,6 +22,12 @@ class BotWorker:
         self._log_buffer: list[dict] = []
         self.bridge = BinanceBridge()
 
+        # --- novos travões / estado
+        self.is_long = False            # posição atual (spot: comprado = True)
+        self.last_exec_ts = 0.0         # timestamp última ordem
+        self.cooldown_sec = getattr(settings, "cooldown_seconds", 60)  # podes pôr no .env
+        self.min_proba_gap = getattr(settings, "min_proba_gap", 0.10)  # diferença mínima entre BUY e SELL
+
     @property
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
@@ -24,64 +35,77 @@ class BotWorker:
     def logs(self) -> list[dict]:
         return list(self._log_buffer)[-250:]
 
+    def _can_execute(self) -> bool:
+        return (time.time() - self.last_exec_ts) >= self.cooldown_sec
+
+    def _update_position(self, side: str):
+        # Spot simples: se comprou, fica long; se vendeu, fica flat.
+        if side == "BUY":
+            self.is_long = True
+        elif side == "SELL":
+            self.is_long = False
+
     async def _loop(self):
         console.log("Worker loop started (Binance)")
+        try:
+            load_model()
+            console.log({"model_info": current_model_info()})
+        except Exception as e:
+            console.log({"model_load_error": str(e)})
+
         try:
             while self._running.is_set():
                 try:
                     df = self.bridge.klines_df(interval="1m", limit=50)
-                    side = ai_signal(df) if settings.use_ai else sma_crossover_signal(df)  # BUY/SELL/HOLD
-                    # --- (NOVO) probabilidades no log quando USE_AI=true ---
+
+                    if settings.use_ai:
+                        side, proba = ai_signal_with_proba(df)
+                    else:
+                        side = sma_crossover_signal(df)
+                        proba = {"HOLD": 1.0, "BUY": 0.0, "SELL": 0.0}
+
+                    # Margem mínima de confiança entre BUY e SELL
+                    p_buy = float(proba.get("BUY", 0.0))
+                    p_sell = float(proba.get("SELL", 0.0))
+                    gap = abs(p_buy - p_sell)
+
+                    # Gate de execução
+                    do_exec = False
+                    reason = "hold"
+                    if side == "BUY" and (not self.is_long) and self._can_execute() and gap >= self.min_proba_gap:
+                        do_exec = True
+                        reason = "buy_ok"
+                    elif side == "SELL" and self.is_long and self._can_execute() and gap >= self.min_proba_gap:
+                        do_exec = True
+                        reason = "sell_ok"
+
                     event = {
                         "symbol": self.bridge.symbol,
                         "side": side,
                         "close": float(df["close"].iloc[-1]),
+                        "proba": proba,
+                        "executed": False,
+                        "reason": reason,
+                        "is_long": self.is_long,
                     }
 
-                    if settings.use_ai:
+                    if do_exec and self.bridge.live:
                         try:
-                            mdl = load_model()
-                            if mdl is not None:
-                                feats = make_features(df).iloc[[-1]]
-                                # alinhar colunas com o treino, se existir a lista salva
-                                if _model_cols is not None:
-                                    # adiciona colunas em falta com 0.0 e reordena
-                                    missing = [c for c in _model_cols if c not in feats.columns]
-                                    for m in missing:
-                                        feats[m] = 0.0
-                                    feats = feats[_model_cols]
-                                # tentar predict_proba; se não houver, faz fallback
-                                try:
-                                    proba = mdl.predict_proba(feats)[0]  # array tipo [p0,p1,p2]
-                                    classes = list(getattr(mdl, "classes_", [0, 1, 2]))
-                                    prob_map = {int(c): float(p) for c, p in zip(classes, proba)}
-                                    # convenção do treino: 0=HOLD, 1=BUY, 2=SELL
-                                    event["proba"] = {
-                                        "HOLD": prob_map.get(0, 0.0),
-                                        "BUY": prob_map.get(1, 0.0),
-                                        "SELL": prob_map.get(2, 0.0),
-                                    }
-                                except Exception:
-                                    pred = mdl.predict(feats)[0]
-                                    event["proba"] = {
-                                        "HOLD": 1.0 if int(pred) == 0 else 0.0,
-                                        "BUY":  1.0 if int(pred) == 1 else 0.0,
-                                        "SELL": 1.0 if int(pred) == 2 else 0.0,
-                                    }
+                            order = self.bridge.market_order(side)
+                            event.update({"executed": True, "orderId": order.get("orderId")})
+                            self.last_exec_ts = time.time()
+                            self._update_position(side)
+                            event["is_long"] = self.is_long
                         except Exception as e:
-                            # se falhar, não bloqueia o loop — só regista o erro
-                            event["proba_error"] = str(e)
-                        # --- fim probabilidades ---
-                    if side in ("BUY","SELL") and self.bridge.live:
-                        order = self.bridge.market_order(side)
-                        event.update({"executed": True, "orderId": order.get("orderId")})
-                    else:
-                        event.update({"executed": False})
+                            event["error"] = str(e)
+
                     self._log_buffer.append({"ok": True, "event": event})
                     console.log({"ok": True, "event": event})
+
                 except Exception as e:
                     self._log_buffer.append({"ok": False, "error": str(e)})
                     console.log({"ok": False, "error": str(e)})
+
                 await asyncio.sleep(self.interval)
         finally:
             console.log("Worker loop stopped")
@@ -99,4 +123,5 @@ class BotWorker:
         await self._task
         self._task = None
 
+# instancia única
 worker = BotWorker(settings.loop_interval_seconds)

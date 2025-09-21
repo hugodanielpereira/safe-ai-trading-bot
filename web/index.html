@@ -1,0 +1,923 @@
+<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8" />
+  <title>AI Bot Starter</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root { --bg:#0b0b0b; --card:#0f0f0f; --muted:#9aa0a6; --fg:#eaeaea; --line:#1f1f1f; --accent:#00d4ff; --green:#26de81; --red:#fc5c65; }
+    *{ box-sizing:border-box }
+    body{ margin:18px; background:var(--bg); color:var(--fg); font-family: system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial; }
+    h1{ margin:0 0 6px 0; }
+    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .card{ background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:12px; }
+    input, button, select{ padding:8px 10px; background:#141414; color:var(--fg); border:1px solid #222; border-radius:8px; }
+    button{ cursor:pointer }
+    pre{ background:#111; color:#0f0; padding:10px; border-radius:8px; overflow:auto; max-height:35vh; }
+    table{ width:100%; border-collapse:collapse; margin-top:8px }
+    th,td{ padding:8px 10px; border-bottom:1px solid #1f1f1f; text-align:left; }
+    th{ color:var(--muted); cursor:pointer; user-select:none; }
+    tr:hover{ background:#151515 }
+    .muted{ color:var(--muted) }
+    .pill{ background:#151515; border:1px solid #222; padding:3px 8px; border-radius:999px; font-size:12px; color:var(--muted); }
+    canvas{ width:100%; height:260px }
+    .barwrap{ display:flex; gap:12px; margin:8px 0 4px 0 }
+    .bar{ flex:1; height:120px; background:#00d4ff; opacity:0.9; border-radius:8px; position:relative; }
+    .bar span{ position:absolute; top:-18px; left:50%; transform:translateX(-50%); font-size:12px; color:var(--muted); }
+    .pnl-pos{ color:var(--green) }
+    .pnl-neg{ color:var(--red) }
+    details summary{ cursor:pointer }
+
+    /* Tabs */
+    .tab{ display:none }
+    .tab.active{ display:block }
+    .tabbtn{ padding:8px 12px; border:1px solid #222; background:#141414; border-radius:8px; opacity:.9 }
+    .tabbtn.active{ border-color:var(--accent); box-shadow:0 0 0 1px rgba(0,212,255,.2) inset }
+  </style>
+</head>
+<body>
+  <h1>AI Bot Starter <span class="pill" id="ver"></span></h1>
+
+  <!-- NAV TABS -->
+  <div class="row" style="gap:6px;margin:8px 0 12px 0;">
+    <button class="tabbtn active" data-tab="tab-dados" onclick="showTab('tab-dados')">Dados</button>
+    <button class="tabbtn" data-tab="tab-treino" onclick="showTab('tab-treino')">Treinar</button>
+    <button class="tabbtn" data-tab="tab-backtest" onclick="showTab('tab-backtest')">Backtests</button>
+    <button class="tabbtn" data-tab="tab-modelos" onclick="showTab('tab-modelos')">Modelos</button>
+    <button class="tabbtn" data-tab="tab-operacao" onclick="showTab('tab-operacao')">Operação</button>
+  </div>
+
+  <!-- ====== OPÇÕES GLOBAIS (token + auto-refresh) ====== -->
+  <div class="card">
+    <div class="row">
+      <input id="token" placeholder="X-API-Token" />
+      <button onclick="start()">Start</button>
+      <button onclick="stop()">Stop</button>
+      <button onclick="status()">Status</button>
+      <button onclick="logs()">Logs</button>
+      <div style="margin-left:auto" class="row">
+        <button onclick="loadMetrics()">Refresh métricas</button>
+        <label class="row" style="gap:6px;"><input type="checkbox" id="autoref" checked /> <span class="muted">Auto-refresh (10s)</span></label>
+      </div>
+    </div>
+    <details style="margin-top:8px;">
+      <summary class="muted">Ver JSON de debug</summary>
+      <pre id="out2">[]</pre>
+    </details>
+  </div>
+
+  <!-- ========== ABA: DADOS (fetch + migrate) ========== -->
+  <div class="tab" id="tab-dados">
+    <div class="card">
+      <h3 style="margin:0 0 8px 0;">Buscar dados históricos</h3>
+      <div class="row" style="gap:8px; flex-wrap:wrap;">
+        <input id="fdSymbol" placeholder="symbol (ex: BTCUSDT)" style="width:160px;">
+        <select id="fdInterval" title="intervalo" style="width:120px;"></select>
+        <input id="fdStart" type="date" title="start (UTC)">
+        <input id="fdEnd" type="date" title="end (UTC)">
+        <label class="row" style="gap:6px;">
+          <input id="fdMigrate" type="checkbox">
+          <span class="muted">Migrar ficheiros existentes</span>
+        </label>
+        <button onclick="fetchData()">Fetch</button>
+      </div>
+      <div id="fdMeta" class="muted" style="margin-top:6px;"></div>
+      <details style="margin-top:8px;">
+        <summary class="muted">Resposta</summary>
+        <pre id="fdJson"></pre>
+      </details>
+    </div>
+
+    <div class="card">
+  <h3 style="margin:0 0 8px 0;">Downloads rápidos (lote)</h3>
+
+  <div class="row" style="gap:8px; flex-wrap:wrap;">
+    <label style="min-width:260px;">
+      <div class="muted" style="margin-bottom:4px;">Símbolos (vírgulas)</div>
+      <input id="bulkSymbols" style="min-width:260px"
+             value="BTCUSDT,ETHUSDT,BNBUSDT" />
+    </label>
+
+    <label>
+      <div class="muted" style="margin-bottom:4px;">Intervalos</div>
+      <div class="row" style="gap:10px;">
+        <label class="row" style="gap:6px;"><input class="bulkIv" type="checkbox" value="1m" checked> 1m</label>
+        <label class="row" style="gap:6px;"><input class="bulkIv" type="checkbox" value="5m" checked> 5m</label>
+        <label class="row" style="gap:6px;"><input class="bulkIv" type="checkbox" value="15m" checked> 15m</label>
+      </div>
+    </label>
+
+    <label>
+      <div class="muted" style="margin-bottom:4px;">Início (UTC)</div>
+      <input id="bulkStart" type="date">
+    </label>
+    <label>
+      <div class="muted" style="margin-bottom:4px;">Fim (UTC)</div>
+      <input id="bulkEnd" type="date">
+    </label>
+
+    <label class="row" style="gap:6px;">
+      <input id="bulkMigrate" type="checkbox">
+      <span class="muted">Migrar ficheiros existentes</span>
+    </label>
+
+    <button onclick="fetchBulk()">Fetch em lote</button>
+  </div>
+
+  <div id="bulkMeta" class="muted" style="margin-top:6px;"></div>
+  <details style="margin-top:8px;">
+    <summary class="muted">Log</summary>
+    <pre id="bulkLog" style="max-height:200px;"></pre>
+  </details>
+</div>
+
+    <div class="card">
+      <h3 style="margin:0 0 8px 0;">Migrar estrutura (flat ➜ por intervalo/ano)</h3>
+      <div class="row" style="gap:8px;">
+        <input id="mgSymbol" placeholder="symbol (ex: BTCUSDT)" style="width:160px;">
+        <button onclick="migrateFlat()">Migrar</button>
+      </div>
+      <div id="mgMeta" class="muted" style="margin-top:6px;"></div>
+      <details style="margin-top:8px;">
+        <summary class="muted">Resposta</summary>
+        <pre id="mgJson"></pre>
+      </details>
+    </div>
+  </div>
+
+  <!-- ========== ABA: TREINAR ========== -->
+  <div class="tab" id="tab-treino">
+    <div class="card" id="trainCard">
+      <h3 style="margin:0 0 8px 0;">Treinar modelo</h3>
+      <div class="row" style="gap:8px; flex-wrap:wrap;">
+        <input id="trSymbol" style="width:160px" placeholder="SYMBOL (ex: BTCUSDT)" />
+        <select id="trInterval" title="interval" style="width:120px"></select>
+        <input id="trCsv" style="min-width:340px"
+          placeholder="csv_path / glob / dir / lista (ex: data/BTCUSDT/1m/*.csv ou data/BTCUSDT/1m/ ou data/2020.csv,data/2021.csv)" />
+        <input id="trFrom" type="date" title="date_from" />
+        <input id="trTo" type="date" title="date_to" />
+        <input id="trOut" style="min-width:320px" placeholder="out_path (opcional, ex: models/gbm_BTCUSDT_1m_2020-2024.pkl)" />
+        <button onclick="runTrain()">Treinar</button>
+        <input id="trJobId" placeholder="job treino" readonly style="width:180px;opacity:.8;">
+        <button onclick="cancelTrain(document.getElementById('trJobId').value)">Cancelar</button>
+      </div>
+      <div id="trMeta" class="muted" style="margin-top:6px;"></div>
+      <details style="margin-top:8px;">
+        <summary class="muted">Ver JSON do treino</summary>
+        <pre id="trJson"></pre>
+      </details>
+    </div>
+  </div>
+
+  <!-- INVENTÁRIO (TREINO) -->
+<div class="row" style="gap:8px; margin-top:6px; flex-wrap:wrap;">
+  <button onclick="fetchInventory('train')">🔄 Carregar inventário</button>
+  <select id="invTrain" style="min-width:320px" onchange="applyInventorySelection('train')">
+    <option value="">— escolher símbolo/intervalo —</option>
+  </select>
+  <span class="muted">Ao escolher, preenche o campo CSV automaticamente.</span>
+</div>
+
+  <!-- ========== ABA: BACKTESTS ========== -->
+  <div class="tab" id="tab-backtest">
+    <div class="card" id="btCard">
+      <h3 style="margin:0 0 8px 0;">Backtests</h3>
+      <div class="row" style="gap:8px;">
+        <label>Strategy
+          <select id="btStrategy">
+            <option value="ai">AI (modelo)</option>
+            <option value="sma">SMA cross</option>
+          </select>
+        </label>
+        <input id="btCsv" style="min-width:320px"
+          placeholder="csv_path ou glob ou vários (ex: data/BTCUSDT/1m/  |  data/BTCUSDT/1m/*.csv  |  data/2020.csv,data/2021.csv)" />
+        <input id="btModel" style="min-width:260px" placeholder="model_path (ex: models/gbm_BTCUSDT.pkl)" />
+        <input id="btBuy" type="number" min="0" max="1" step="0.01" value="0.55" title="buy_th" />
+        <input id="btSell" type="number" min="0" max="1" step="0.01" value="0.55" title="sell_th" />
+        <input id="btFee" type="number" min="0" step="0.1" value="1.0" title="fee_bps" />
+        <input id="btSlip" type="number" min="0" step="0.1" value="0.0" title="slippage_bps" />
+        <input id="btFrom" type="date" title="date_from" />
+        <input id="btTo" type="date" title="date_to" />
+        <input id="btMax" type="number" min="1000" step="1000" placeholder="max_rows (opcional)" style="width:150px" />
+        <button onclick="runBacktest()">Correr backtest</button>
+      </div>
+      <div class="row" style="gap:8px;margin-top:6px;">
+        <input id="btJobId" placeholder="job atual" readonly style="width:180px;opacity:.8;">
+        <button onclick="cancelBacktest(document.getElementById('btJobId').value)">Cancelar</button>
+      </div>
+      <div id="btMeta" class="muted" style="margin-top:6px;"></div>
+      <canvas id="btChart"></canvas>
+      <details style="margin-top:8px;">
+        <summary class="muted">Ver JSON do backtest</summary>
+        <pre id="btJson"></pre>
+      </details>
+    </div>
+
+    <!-- INVENTÁRIO (BACKTEST) -->
+<div class="row" style="gap:8px; margin-bottom:6px; flex-wrap:wrap;">
+  <button onclick="fetchInventory('back')">🔄 Carregar inventário</button>
+  <select id="invBack" style="min-width:320px" onchange="applyInventorySelection('back')">
+    <option value="">— escolher símbolo/intervalo —</option>
+  </select>
+  <span class="muted">Ao escolher, preenche o campo CSV automaticamente.</span>
+</div>
+
+    <div class="row" style="gap:8px; margin-top:6px;">
+      <button onclick="listBacktests()">Listar guardados</button>
+      <select id="btSaved" style="min-width:360px">
+        <option value="">— escolher um backtest guardado —</option>
+      </select>
+      <input id="btId" placeholder="ou escreve o id (sha1)" style="width:220px" />
+      <button onclick="loadSaved(document.getElementById('btSaved').value || document.getElementById('btId').value)">Carregar</button>
+    </div>
+    <div id="btListMeta" class="muted" style="margin-top:4px;"></div>
+  </div>
+
+  <!-- ========== ABA: MODELOS (métricas) ========== -->
+  <div class="tab" id="tab-modelos">
+    <div class="card">
+      <h3 style="margin:0 0 6px 0;">Comparação de modelos treinados</h3>
+      <div class="muted">Fonte: <code>models/metrics_summary.csv</code> via <code>/metrics</code></div>
+      <div class="barwrap" id="barwrap"></div>
+      <table>
+        <thead>
+          <tr>
+            <th onclick="sortBy('symbol')">symbol</th>
+            <th onclick="sortBy('interval')">interval</th>
+            <th onclick="sortBy('rows')">rows</th>
+            <th onclick="sortBy('cv_accuracy')">cv_accuracy</th>
+            <th>model_path</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="metricsBody"></tbody>
+      </table>
+      <div id="emptyMsg" class="muted" style="display:none; margin-top:8px;">Sem métricas ainda. Corre <code>make train-multi</code> ou <code>make retrain-multi</code>.</div>
+    </div>
+  </div>
+
+  <!-- ========== ABA: OPERAÇÃO (bot + portfólio) ========== -->
+  <div class="tab" id="tab-operacao">
+    <div class="card" id="portCard">
+      <div class="row" style="width:100%;">
+        <h3 style="margin:0;">Portfólio (Spot)</h3>
+        <button onclick="loadPortfolio()">Atualizar portfólio</button>
+        <span class="muted" style="margin-left:auto;">Trades a carregar</span>
+        <input id="limit" type="number" min="50" step="50" value="1000" style="width:110px;" title="Limite de trades"/>
+      </div>
+      <div id="portMeta" class="muted" style="margin-top:6px;"></div>
+      <canvas id="priceChart"></canvas>
+      <details style="margin-top:8px;">
+        <summary class="muted">Ver JSON de portfólio</summary>
+        <pre id="portJson"></pre>
+      </details>
+    </div>
+  </div>
+
+  <!-- DEBUG GLOBAL -->
+  <div class="card" style="margin-top:12px;">
+    <details>
+      <summary class="muted">Ver JSON de debug</summary>
+      <pre id="out">[]</pre>
+    </details>
+  </div>
+
+<script>
+/* ======================
+   HELPERS / ESTADO
+====================== */
+const $ = (id) => document.getElementById(id);
+const store = {
+  get token(){ return localStorage.getItem('xToken') || '' },
+  set token(v){ localStorage.setItem('xToken', v||'') }
+};
+function hdrs(extra={}){ const t=$('token')?.value?.trim?.() || store.token || ''; const h={'Content-Type':'application/json'}; if(t) h['X-API-Token']=t; return Object.assign(h, extra); }
+function api(path, opts={}){ return fetch(path, Object.assign({headers: hdrs()}, opts)); }
+function setOut(obj){ const el=$('out'); if (el) el.textContent = typeof obj==='string' ? obj : JSON.stringify(obj, null, 2); }
+function safeFixed(v, dec=2){ return (typeof v==='number' && isFinite(v)) ? v.toFixed(dec) : (0).toFixed(dec); }
+
+const KNOWN_INTERVALS = ["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d","3d","1w","1M"];
+function fillIntervals(selectId){
+  const sel = $(selectId); if (!sel) return;
+  sel.innerHTML = '';
+  for(const iv of KNOWN_INTERVALS){ const op = document.createElement('option'); op.value = op.textContent = iv; sel.appendChild(op); }
+}
+
+/* ======================
+   TABS
+====================== */
+function showTab(id){
+  const tabs = document.querySelectorAll('.tab');
+  const btns = document.querySelectorAll('.tabbtn');
+  tabs.forEach(el=>el.classList.remove('active'));
+  btns.forEach(b=>b.classList.remove('active'));
+
+  let tab = document.getElementById(id);
+  if (!tab) { // fallback se id inválido (ex: lixo no localStorage)
+    id = 'tab-dados';
+    tab = document.getElementById(id);
+  }
+  if (tab) tab.classList.add('active');
+
+  const btn = document.querySelector('.tabbtn[data-tab="'+id+'"]');
+  if (btn) btn.classList.add('active');
+
+  try { localStorage.setItem('ui.tab', id); } catch(_) {}
+}
+
+/* ======================
+   AUTO-REFRESH (métricas)
+====================== */
+let metricsTimer = null;
+function startAutoRefresh(){ if (!metricsTimer) metricsTimer = setInterval(()=>{ loadMetrics(); }, 10000); }
+function stopAutoRefresh(){ if (metricsTimer){ clearInterval(metricsTimer); metricsTimer=null; }}
+
+/* ======================
+   BOT
+====================== */
+async function start(){ const r = await api('/start',{method:'POST'}); setOut(await r.json().catch(()=>r.text())); }
+async function stop(){ const r = await api('/stop',{method:'POST'}); setOut(await r.json().catch(()=>r.text())); }
+async function status(){ const r = await api('/status'); setOut(await r.json().catch(()=>r.text())); }
+async function logs(){ const r = await api('/logs'); setOut(await r.json().catch(()=>r.text())); }
+
+/* ======================
+   MÉTRICAS / MODELOS
+====================== */
+let metrics = []; let sortKey='cv_accuracy'; let sortAsc=false;
+function renderBars(ms){
+  const w = $('barwrap'); if(!w) return; w.innerHTML='';
+  if(!ms.length) return;
+  let max = 0; for (let i=0;i<ms.length;i++) { const v = ms[i].cv_accuracy || 0; if (v > max) max = v; }
+  ms.forEach(m=>{
+    const div = document.createElement('div'); div.className='bar';
+    const h = Math.max(6, Math.round(120 * (m.cv_accuracy||0) / (max||1)));
+    div.style.height = h + 'px'; div.innerHTML = `<span>${(m.cv_accuracy||0).toFixed(3)}</span>`;
+    w.appendChild(div);
+  });
+}
+function renderTable(){
+  const body = $('metricsBody'); if(!body) return; body.innerHTML='';
+  if(!metrics.length){ $('emptyMsg') && ( $('emptyMsg').style.display='block'); renderBars([]); return; }
+  $('emptyMsg') && ( $('emptyMsg').style.display='none');
+  const rows = metrics.slice().sort((a,b)=>{
+    const ak=a[sortKey], bk=b[sortKey];
+    if(ak===bk) return 0;
+    if(typeof ak==='number' && typeof bk==='number') return sortAsc? ak-bk : bk-ak;
+    return sortAsc? (''+ak).localeCompare(''+bk) : (''+bk).localeCompare(''+ak);
+  });
+  renderBars(rows);
+  for(const r of rows){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><a href="#" onclick="loadDetail('${r.symbol}');return false;">${r.symbol}</a></td>
+      <td>${r.interval||''}</td>
+      <td>${r.rows||0}</td>
+      <td>${(r.cv_accuracy??0).toFixed(4)}</td>
+      <td><code>${r.model_path||''}</code></td>
+      <td><button onclick="useModel('${r.symbol}','${(r.model_path||'').replace(/"/g,'&quot;')}')">Usar</button></td>`;
+    body.appendChild(tr);
+  }
+}
+function sortBy(key){ if(sortKey===key) sortAsc=!sortAsc; else {sortKey=key; sortAsc=true;} renderTable(); }
+async function loadMetrics(){
+  try{ const r = await api('/metrics'); const data = await r.json();
+       metrics = (data && data.summary) ? data.summary : []; renderTable(); setOut(metrics);
+  }catch(e){ setOut('Erro a carregar métricas: '+e); }
+}
+async function loadDetail(symbol){ const r = await api('/metrics?symbol='+encodeURIComponent(symbol)); setOut(await r.json().catch(()=>r.text())); }
+async function useModel(symbol, explicitPath){
+  const body = explicitPath ? {symbol, model_path: explicitPath} : {symbol};
+  const r = await fetch('/set_symbol', { method:'POST', headers: hdrs(), body: JSON.stringify(body) });
+  setOut(await r.json().catch(()=>r.text()));
+}
+
+/* ======================
+   PORTFÓLIO
+====================== */
+async function loadPortfolio(){
+  const meta=$('portMeta'), j=$('portJson'); if(meta) meta.textContent = 'A carregar...'; if(j) j.textContent='';
+  try{
+    const limit = Math.max(50, parseInt($('limit').value || '1000',10));
+    const p = await (await api('/portfolio?limit='+limit)).json();
+    const k = await (await api('/klines?symbol='+encodeURIComponent(p.symbol)+'&interval=1m&limit=200')).json();
+    const pctVal = (p.unrealized_pnl_pct||0)*100;
+    const pctTxt = safeFixed(pctVal, 2);
+    const pnlClass = pctVal >= 0 ? 'pnl-pos' : 'pnl-neg';
+    if(meta) meta.innerHTML =
+      `Symbol=${p.symbol||'?'} | Pos=${safeFixed(p.position_qty,6)} ${p.base||''} | `+
+      `Avg=${safeFixed(p.avg_price)} | Px=${safeFixed(p.price)} | `+
+      `PnL≃ <span class="${pnlClass}">${safeFixed(p.unrealized_pnl)} (${pctTxt}%)</span>`;
+    if(j) j.textContent = JSON.stringify(p, null, 2);
+    drawPriceWithTrades($('priceChart'), k.data||[], p.trades||[]);
+  }catch(e){ if(meta) meta.textContent = 'Erro a carregar portfólio: ' + e; }
+}
+
+/* ======================
+   DESENHO (gráficos)
+====================== */
+function arrayMin(arr){ let m=Infinity; for(let i=0;i<arr.length;i++){ const v=arr[i]; if(v<m) m=v; } return m; }
+function arrayMax(arr){ let m=-Infinity; for(let i=0;i<arr.length;i++){ const v=arr[i]; if(v>m) m=v; } return m; }
+function decimate(series, maxN=1200){
+  if(!series || series.length<=maxN) return series;
+  const step = Math.ceil(series.length / maxN), out = [];
+  for(let i=0;i<series.length;i+=step) out.push(series[i]);
+  if(out[out.length-1] !== series[series.length-1]) out.push(series[series.length-1]);
+  return out;
+}
+function drawEquity(canvas, series){
+  if(!canvas) return; const ctx = canvas.getContext('2d');
+  const wrapWidth = canvas.parentElement.clientWidth||800;
+  canvas.width = wrapWidth; canvas.height = 260; ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(!series || !series.length) return;
+  const s = decimate(series, 1200), pad=30, w=canvas.width-pad*2, h=canvas.height-pad*2;
+  const t = new Array(s.length), eq = new Array(s.length);
+  for(let i=0;i<s.length;i++){ t[i] = s[i].t||0; eq[i] = s[i].equity; }
+  const tMin = arrayMin(t), tMax = arrayMax(t), eMin = arrayMin(eq), eMax = arrayMax(eq);
+  const x = v => pad + ((v - tMin) / Math.max(1,(tMax - tMin)||1)) * w;
+  const y = v => pad + (1 - ((v - eMin) / Math.max(1e-9,(eMax - eMin)))) * h;
+  ctx.strokeStyle='#333'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(pad, pad); ctx.lineTo(pad, pad+h); ctx.lineTo(pad+w, pad+h); ctx.stroke();
+  ctx.beginPath(); ctx.lineWidth=2; ctx.strokeStyle='#00d4ff';
+  for(let i=0;i<s.length;i++){ const px=x(t[i]); const py=y(eq[i]); if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py); } ctx.stroke();
+  ctx.fillStyle='#9aa0a6'; ctx.font='12px system-ui'; ctx.fillText(eMax.toFixed(3), pad+4, pad+12); ctx.fillText(eMin.toFixed(3), pad+4, pad+h-4);
+}
+function drawPriceWithTrades(canvas, series, trades){
+  if(!canvas) return; const ctx = canvas.getContext('2d');
+  const wrapWidth = canvas.parentElement.clientWidth||800;
+  canvas.width = wrapWidth; canvas.height = 260; ctx.clearRect(0,0,canvas.width,canvas.height);
+  if(!series || !series.length) return;
+  const s = decimate(series, 1200), pad=30, w=canvas.width-pad*2, h=canvas.height-pad*2;
+  const closes = new Array(s.length), tt = new Array(s.length);
+  for(let i=0;i<s.length;i++){ closes[i]=s[i].close; tt[i]=s[i].t ?? (tt[0]??0)+i; }
+  const tMin = arrayMin(tt), tMax = arrayMax(tt), pMin = arrayMin(closes), pMax = arrayMax(closes);
+  const x = v => pad + ((v - tMin) / Math.max(1,(tMax - tMin)||1)) * w;
+  const y = v => pad + (1 - ((v - pMin) / Math.max(1e-9,(pMax - pMin)))) * h;
+  ctx.strokeStyle='#333'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(pad, pad); ctx.lineTo(pad, pad+h); ctx.lineTo(pad+w, pad+h); ctx.stroke();
+  ctx.beginPath(); ctx.lineWidth=2; ctx.strokeStyle='#00d4ff';
+  for(let i=0;i<s.length;i++){ const px=x(tt[i]); const py=y(closes[i]); if(i===0) ctx.moveTo(px,py); else ctx.lineTo(px,py); } ctx.stroke();
+  if(Array.isArray(trades)){
+    for(let i=0;i<trades.length;i++){
+      const tr = trades[i]; const time = Number(tr.time||0), price = Number(tr.price||0); if(!price) continue;
+      const px = x(time), py = y(price); ctx.beginPath(); ctx.fillStyle = tr.isBuyer ? '#26de81' : '#fc5c65'; ctx.arc(px, py, 4, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,0.07)'; ctx.beginPath(); ctx.moveTo(px, pad); ctx.lineTo(px, pad+h); ctx.stroke();
+    }
+  }
+  ctx.fillStyle='#9aa0a6'; ctx.font='12px system-ui'; ctx.fillText(pMax.toFixed(2), pad+4, pad+12); ctx.fillText(pMin.toFixed(2), pad+4, pad+h-4);
+}
+
+/* ======================
+   INVENTÁRIO DE DADOS -> preenche dropdowns
+   Requer endpoint /data_inventory a devolver:
+   { items: [{ symbol, interval, years: [YYYY,...] }, ...] }
+====================== */
+async function fetchInventory(target){
+  try{
+    const r = await api('/data_inventory');
+    const d = await r.json();
+    if(!r.ok){ throw new Error(d?.detail || r.status); }
+
+    const items = Array.isArray(d.items) ? d.items : [];
+    const sel = (target === 'train') ? $('invTrain') : $('invBack');
+    if(!sel) return;
+
+    // limpar e repovoar
+    sel.innerHTML = '<option value="">— escolher símbolo/intervalo —</option>';
+
+    // ordenar por symbol + interval
+    items.sort((a,b)=>{
+      const ak = (a.symbol||'') + '_' + (a.interval||'');
+      const bk = (b.symbol||'') + '_' + (b.interval||'');
+      return ak.localeCompare(bk);
+    });
+
+    // criar opções
+    items.forEach(it=>{
+      const sym = (it.symbol||'').toUpperCase();
+      const iv  = it.interval || '';
+      const years = Array.isArray(it.years) && it.years.length ? ` (${it.years.join(',')})` : '';
+      const label = `${sym} • ${iv}${years}`;
+      const path = `data/${sym}/${iv}/`;   // diretório-base para o CSV/globs
+
+      const opt = document.createElement('option');
+      opt.value = path;
+      opt.textContent = label;
+      // guardamos metadata para auto-preencher symbol/interval quando existir
+      opt.dataset.symbol = sym;
+      opt.dataset.interval = iv;
+      sel.appendChild(opt);
+    });
+
+    // feedback leve
+    if (sel.options.length === 1){
+      // só o placeholder -> nada encontrado
+      alert('Inventário vazio: faz primeiro o download de dados na aba "Dados".');
+    }
+  }catch(e){
+    alert('Erro ao carregar inventário: ' + e);
+  }
+}
+
+function applyInventorySelection(target){
+  const sel = (target === 'train') ? $('invTrain') : $('invBack');
+  if(!sel) return;
+  const path = sel.value || '';
+  if(!path) return;
+
+  // preenche o campo CSV conforme a aba
+  if (target === 'train' && $('trCsv')) $('trCsv').value = path;
+  if (target === 'back'  && $('btCsv')) $('btCsv').value = path;
+
+  // se existir input de símbolo/intervalo na aba de Treino, preenche também
+  const sym = sel.selectedOptions?.[0]?.dataset?.symbol || '';
+  const iv  = sel.selectedOptions?.[0]?.dataset?.interval || '';
+
+  if (target === 'train'){
+    if ($('trSymbol') && sym) $('trSymbol').value = sym;
+    if ($('trInterval') && iv){
+      // tenta selecionar o intervalo existente no <select>
+      const s = $('trInterval');
+      const opt = Array.from(s.options).find(o => o.value === iv);
+      if (opt) s.value = iv;
+    }
+  }
+}
+
+function getSelectedBulkIntervals(){
+  return Array.from(document.querySelectorAll('.bulkIv'))
+    .filter(cb => cb.checked)
+    .map(cb => cb.value);
+}
+
+function appendBulkLog(line){
+  const el = $('bulkLog');
+  if (!el) return;
+  el.textContent += line + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+async function fetchBulk(){
+  const syms = ($('bulkSymbols').value || '').split(',')
+               .map(s => s.trim().toUpperCase()).filter(Boolean);
+  const ivs  = getSelectedBulkIntervals();
+  const start = $('bulkStart').value || $('fdStart')?.value;
+  const end   = $('bulkEnd').value   || $('fdEnd')?.value;
+  const migrate_existing = $('bulkMigrate').checked;
+
+  if (!syms.length || !ivs.length || !start || !end){
+    $('bulkMeta').textContent = 'Preenche símbolos, intervalos, start e end.';
+    return;
+  }
+
+  $('bulkMeta').textContent = 'A iniciar downloads…';
+  $('bulkLog').textContent = '';
+
+  let ok=0, fail=0, total = syms.length * ivs.length;
+  const started = Date.now();
+
+  for (const sym of syms){
+    for (const iv of ivs){
+      const body = { symbol: sym, interval: iv, start, end, migrate_existing };
+      appendBulkLog(`→ ${sym} • ${iv} • ${start}..${end}`);
+      try{
+        const r = await fetch('/data_fetch', { method:'POST', headers: hdrs(), body: JSON.stringify(body) });
+        const d = await r.json();
+        if(!r.ok){
+          fail++; appendBulkLog(`  ✗ Erro: ${d?.detail || r.status}`);
+        }else{
+          ok++; appendBulkLog(`  ✓ ${d.rows_fetched} linhas • ${ (d.written?.files||[]).length } ficheiro(s)`);
+        }
+      }catch(e){
+        fail++; appendBulkLog(`  ✗ Falha: ${e}`);
+      }
+      // pequeno intervalo para não “martelar” a API
+      await new Promise(res=>setTimeout(res, 250));
+      const done = ok + fail;
+      const secs = Math.round((Date.now()-started)/1000);
+      $('bulkMeta').textContent = `Progresso: ${done}/${total} • OK=${ok} • Erros=${fail} • t=${secs}s`;
+    }
+  }
+
+  // atualiza dropdowns de inventário nas outras abas
+  try { await fetchInventory('train'); await fetchInventory('back'); } catch(_) {}
+
+  const secs = Math.round((Date.now()-started)/1000);
+  $('bulkMeta').textContent = `Concluído: ${ok}/${total} OK, ${fail} erros • t=${secs}s`;
+}
+
+/* ======================
+   BACKTEST (jobs)
+====================== */
+const BT_STATE = { running: false, jobId: null };
+let BT_TIMER = null;
+function fmtSec(s){ s = Math.max(0, Math.floor(s||0)); const m=Math.floor(s/60), r=s%60; return `${m}m${r.toString().padStart(2,'0')}s`; }
+
+// --- helpers p/ detetar symbol/interval do path ---
+function detectSymbolFromText(txt){
+  if (!txt) return null;
+  const mDir = txt.match(/data\/([A-Z]{3,12})\//);               // ex: data/BTCUSDT/1m/...
+  if (mDir) return mDir[1].toUpperCase();
+  const mPair = txt.match(/([A-Z]{3,12})(USDT|BUSD|USDC|BTC|ETH|BNB)/i); // ex: BTCUSDT_2022.csv
+  if (mPair) return (mPair[1] + mPair[2]).toUpperCase();
+  return null;
+}
+function detectIntervalFromText(txt){
+  if (!txt) return null;
+  const m = txt.match(/(?:^|[._\-\/])(1m|3m|5m|15m|30m|1h|2h|4h|6h|8h|12h|1d|3d|1w|1M)(?:[._\-\/]|$)/i);
+  return m ? m[1] : null;
+}
+
+function hasToken(){
+  const t = ($('token')?.value || '').trim() || (localStorage.getItem('xToken')||'').trim();
+  return t.length > 0;
+}
+
+async function runBacktest(){
+  // validações rápidas
+  const csv = $('btCsv').value.trim();
+  if (!csv){ $('btMeta').textContent = 'Indica o caminho do CSV (csv_path).'; return; }
+  if (!hasToken()){
+    $('btMeta').textContent = 'Falta o X-API-Token. Preenche o campo no topo.';
+    return;
+  }
+
+  const body = {
+    symbol: 'BTCUSDT',                    // ajusta se quiseres
+    interval: '1m',                       // o loader usa para inferência/opcional
+    csv_path: csv,                        // aceita pasta, glob, ficheiro
+    strategy: $('btStrategy').value,
+    model_path: ($('btModel').value.trim() || null),
+    buy_th: parseFloat($('btBuy').value || '0.55'),
+    sell_th: parseFloat($('btSell').value || '0.55'),
+    fee_bps: parseFloat($('btFee').value || '1.0'),
+    slippage_bps: parseFloat($('btSlip').value || '0.0'),
+    date_from: $('btFrom')?.value || null,
+    date_to: $('btTo')?.value || null,
+    max_rows: $('btMax')?.value ? parseInt($('btMax').value,10) : null,
+  };
+
+  // prepara UI
+  if (window.BT_TIMER) { clearInterval(window.BT_TIMER); window.BT_TIMER=null; }
+  $('btMeta').textContent = 'A criar job…';
+  $('btJson').textContent = '';
+  $('btJobId').value = '';
+  drawEquity($('btChart'), []);
+  const wasAuto = $('autoref')?.checked;
+  if (wasAuto) stopAutoRefresh();
+
+  // chama o endpoint
+  let resp;
+  try{
+    resp = await fetch('/backtest_run_async', {
+      method:'POST',
+      headers: hdrs(),
+      body: JSON.stringify(body)
+    });
+  }catch(e){
+    console.error('[backtest] network error', e);
+    $('btMeta').textContent = 'Falha de rede: ' + e;
+    if (wasAuto) startAutoRefresh();
+    return;
+  }
+
+  // trata erros HTTP com detalhe no UI
+  let payload;
+  try { payload = await resp.json(); } catch { payload = null; }
+  if(!resp.ok){
+    const msg = (payload && payload.detail) ? payload.detail : `${resp.status} ${resp.statusText}`;
+    console.error('[backtest] HTTP error', resp.status, msg, payload);
+    $('btMeta').textContent = 'Erro a criar job: ' + msg;
+    $('btJson').textContent = JSON.stringify(payload || {}, null, 2);
+    if (wasAuto) startAutoRefresh();
+    return;
+  }
+
+  const { job_id } = payload || {};
+  if (!job_id){
+    $('btMeta').textContent = 'Resposta inesperada do servidor (sem job_id).';
+    $('btJson').textContent = JSON.stringify(payload || {}, null, 2);
+    if (wasAuto) startAutoRefresh();
+    return;
+  }
+
+  $('btJobId').value = job_id;
+  toggleCancelBtn();
+  $('btMeta').textContent = `Job ${job_id} criado. A iniciar…`;
+  console.log('[backtest] job_id', job_id);
+
+  // polling de status (1s)
+  window.BT_TIMER = setInterval(async ()=>{
+    try{
+      const stRes = await fetch('/backtest_status?job_id='+encodeURIComponent(job_id), { headers: hdrs() });
+      let st;
+      try { st = await stRes.json(); } catch { st = null; }
+      if (!stRes.ok){
+        console.error('[backtest] status http error', stRes.status, st);
+        $('btMeta').textContent = `Erro no status (${stRes.status})`;
+        $('btJson').textContent = JSON.stringify(st || {}, null, 2);
+        clearInterval(window.BT_TIMER); window.BT_TIMER=null;
+        if (wasAuto) startAutoRefresh();
+        return;
+      }
+
+      // espelha JSON bruto no painel para debug
+      $('btJson').textContent = JSON.stringify(st, null, 2);
+
+      const pct = (st.percent==null) ? '—' : `${Math.round(st.percent)}%`;
+      const el = fmtSec(st.elapsed);
+      $('btMeta').textContent = `Job ${st.id} • ${st.status} • fase=${st.phase} • ${pct} • ${el} • ${st.message||''}`;
+
+      if (st.status === 'done'){
+        clearInterval(window.BT_TIMER); window.BT_TIMER=null;
+        if (st.result_path){
+          const savedId = (st.result_path.split('/').pop()||'').replace('.json','');
+          await loadSaved(savedId);
+          await listBacktests(true);
+        }
+        $('btJobId').value = '';
+        toggleCancelBtn();
+        if (wasAuto) startAutoRefresh();
+      } else if (st.status === 'error' || st.status === 'cancelled'){
+        clearInterval(window.BT_TIMER); window.BT_TIMER=null;
+        if (st.status === 'error') console.error('[backtest] erro', st.error||st.message);
+        $('btJobId').value = '';
+        toggleCancelBtn();
+        if (wasAuto) startAutoRefresh();
+      }
+    }catch(e){
+      console.error('[backtest] polling error', e);
+      clearInterval(window.BT_TIMER); window.BT_TIMER=null;
+      $('btMeta').textContent = 'Erro a consultar status: ' + e;
+      toggleCancelBtn();
+      if (wasAuto) startAutoRefresh();
+    }
+  }, 1000);
+}
+
+async function cancelBacktest(jobId){
+  if(!jobId){ $('btMeta').textContent = 'Nenhum job para cancelar.'; return; }
+  try{
+    const r = await fetch('/backtest_cancel', { method:'POST', headers: hdrs(), body: JSON.stringify({ job_id: jobId }) });
+    let d=null; try{ d=await r.json(); }catch{}
+    if (!r.ok){
+      console.error('[backtest] cancel http error', r.status, d);
+      $('btMeta').textContent = 'Falha a cancelar: ' + r.status; return;
+    }
+    $('btMeta').textContent = 'Pedido de cancelamento enviado.';
+  }catch(e){ $('btMeta').textContent = 'Erro a cancelar: ' + e; }
+}
+
+function toggleCancelBtn(){
+  const btn = document.querySelector('button[onclick^="cancelBacktest"]');
+  if (!btn) return;
+  btn.disabled = !$('btJobId').value;
+}
+
+async function listBacktests(silent=false){
+  try{
+    const r = await fetch('/backtest_list', { headers: hdrs() });
+    if (!r.ok){ if (!silent) $('btListMeta').textContent = 'Falha a listar: ' + r.status; return 0; }
+    const d = await r.json(); const items = Array.isArray(d.items) ? d.items : []; const sel = $('btSaved');
+    sel.innerHTML = '<option value="">— escolher um backtest guardado —</option>';
+    if (!items.length){ if (!silent) $('btListMeta').textContent = 'Sem backtests guardados ainda.'; return 0; }
+    items.forEach(it=>{
+      const s = it.summary || {};
+      const label = `${s.symbol || '?'} • ${s.strategy || '?'} • n=${s.n ?? 0} • ret=${(((s.total_return || 0) * 100).toFixed(2))}%`;
+      const opt = document.createElement('option'); opt.value = it.id; opt.textContent = label; sel.appendChild(opt);
+    });
+    if (!silent) $('btListMeta').textContent = `Encontrados ${items.length} backtests guardados.`; return items.length;
+  }catch(e){ if (!silent) $('btListMeta').textContent = 'Erro a listar backtests: ' + e; return 0; }
+}
+async function loadSaved(id){
+  if(!id) return; $('btMeta').textContent = 'A carregar run ' + id + '...';
+  try{
+    const r = await fetch('/backtest_get?id=' + encodeURIComponent(id), { headers: hdrs() });
+    if (!r.ok){ $('btMeta').textContent = 'Falha a carregar: ' + r.status; return; }
+    const d = await r.json(); const s = d.summary || {};
+    $('btMeta').innerHTML = `n=${s.n ?? 0} | ret=${((s.total_return||0)*100).toFixed(2)}% | maxDD=${((s.max_drawdown||0)*100).toFixed(2)}% | sharpe=${(s.sharpe??0).toFixed(2)} | strategy=${s.strategy || '?'}`;
+    $('btJson').textContent = JSON.stringify({ summary: s, request: d.request, id: d.id, saved: d.saved_path }, null, 2);
+    const eq = d.equity_sample || d.equity || []; drawEquity($('btChart'), eq);
+  }catch(e){ $('btMeta').textContent = 'Erro a carregar run: ' + e; }
+}
+
+/* ======================
+   TREINO (jobs)
+====================== */
+let TR_TIMER = null;
+function buildCsvPayloadTrain(raw) {
+  const v = (raw || '').trim(); if (!v) return {};
+  if (v.includes(',')) { const arr = v.split(',').map(s => s.trim()).filter(Boolean); return { csv_paths: arr, csv_path: arr[0] }; }
+  if (v.includes('*') || v.endsWith('/')) { return { csv_paths: [v], csv_path: v }; }
+  return { csv_path: v };
+}
+async function runTrain(){
+  const sym = ($('trSymbol').value || 'BTCUSDT').toUpperCase();
+  const interval = $('trInterval').value;
+  const csvRaw = $('trCsv').value;
+  const csvPayload = buildCsvPayloadTrain(csvRaw);
+  const body = Object.assign({
+    symbol: sym, interval,
+    date_from: $('trFrom')?.value || null,
+    date_to:   $('trTo')?.value   || null,
+    out_path:  $('trOut')?.value  || null,
+    algo: 'gbm', params: null
+  }, csvPayload);
+
+  if (!interval){ $('trMeta').textContent = 'Escolhe um intervalo.'; return; }
+  if (!body.csv_path && !body.csv_paths){ $('trMeta').textContent = 'Indica alguma fonte de CSV (path/glob/dir ou lista).'; return; }
+
+  if (TR_TIMER) { clearInterval(TR_TIMER); TR_TIMER=null; }
+  $('trMeta').textContent = 'A criar job de treino…'; $('trJson').textContent = ''; $('trJobId').value = '';
+
+  let resp;
+  try{ resp = await fetch('/train_run_async', { method:'POST', headers: hdrs(), body: JSON.stringify(body) }); }
+  catch(e){ $('trMeta').textContent = 'Falha a criar job: ' + e; return; }
+  if (!resp.ok){
+    let msg = `${resp.status} ${resp.statusText}`; try { const err = await resp.json(); if (err?.detail) msg += ' — ' + err.detail; } catch {}
+    $('trMeta').textContent = 'Falha a criar job: ' + msg; return;
+  }
+  const { job_id } = await resp.json();
+  $('trJobId').value = job_id; $('trMeta').textContent = `Job ${job_id} criado. A iniciar…`;
+
+  TR_TIMER = setInterval(async ()=>{
+    try{
+      const stRes = await fetch('/train_status?job_id='+encodeURIComponent(job_id), { headers: hdrs() });
+      if (!stRes.ok){ $('trMeta').textContent = `Erro no status (${stRes.status})`; clearInterval(TR_TIMER); TR_TIMER=null; return; }
+      const st = await stRes.json();
+      const pct = (st.percent==null) ? '—' : `${Math.round(st.percent)}%`;
+      const el = fmtSec(st.elapsed);
+      $('trMeta').textContent = `Job ${st.id} • ${st.status} • fase=${st.phase} • ${pct} • ${el} • ${st.message||''}`;
+      $('trJson').textContent = JSON.stringify(st, null, 2);
+      if (['done','error','cancelled'].includes(st.status)){
+        clearInterval(TR_TIMER); TR_TIMER=null;
+        if (st.status === 'done' && st.result?.model_path){ $('btModel').value = st.result.model_path; }
+      }
+    }catch(e){ clearInterval(TR_TIMER); TR_TIMER=null; $('trMeta').textContent = 'Erro a consultar status: ' + e; }
+  }, 1000);
+}
+async function cancelTrain(jobId){
+  if(!jobId){ $('trMeta').textContent = 'Nenhum job para cancelar.'; return; }
+  try{
+    const r = await fetch('/train_cancel', { method:'POST', headers: hdrs(), body: JSON.stringify({ job_id: jobId }) });
+    if (!r.ok){ $('trMeta').textContent = 'Falha a cancelar: ' + r.status; return; }
+    $('trMeta').textContent = 'Pedido de cancelamento enviado.';
+  }catch(e){ $('trMeta').textContent = 'Erro a cancelar: ' + e; }
+}
+
+/* ======================
+   DADOS (fetch + migrate)
+====================== */
+async function fetchData(){
+  const symbol = $('fdSymbol').value.trim();
+  const interval = $('fdInterval').value;
+  const start = $('fdStart').value;
+  const end = $('fdEnd').value;
+  const migrate_existing = $('fdMigrate').checked;
+  if (!symbol || !interval || !start || !end){ $('fdMeta').textContent = 'Preenche symbol, interval, start e end.'; return; }
+  $('fdMeta').textContent = 'A buscar dados…'; $('fdJson').textContent = '';
+  try{
+    const r = await fetch('/data_fetch', { method:'POST', headers: hdrs(), body: JSON.stringify({symbol, interval, start, end, migrate_existing}) });
+    const d = await r.json();
+    if(!r.ok){ $('fdMeta').textContent = 'Erro: '+(d?.detail||r.status); $('fdJson').textContent = JSON.stringify(d,null,2); return; }
+    $('fdMeta').textContent = `OK: ${d.rows_fetched} linhas; gravado em ${(d.written?.files||[]).length} ficheiro(s).`;
+    $('fdJson').textContent = JSON.stringify(d, null, 2);
+  }catch(e){ $('fdMeta').textContent = 'Falha: '+e; }
+}
+async function migrateFlat(){
+  const symbol = $('mgSymbol').value.trim();
+  if (!symbol){ $('mgMeta').textContent = 'Indica o símbolo.'; return; }
+  $('mgMeta').textContent = 'A migrar…'; $('mgJson').textContent = '';
+  try{
+    // o endpoint espera body string (não objeto)
+const r = await fetch('/data_migrate_flat', { method:'POST', headers: hdrs({'Content-Type':'application/json'}), body: JSON.stringify({ symbol }) });    const d = await r.json();
+    if(!r.ok){ $('mgMeta').textContent = 'Erro: '+(d?.detail||r.status); $('mgJson').textContent = JSON.stringify(d,null,2); return; }
+    const n = d?.migrated ?? (Array.isArray(d?.files)? d.files.length : 0);
+    $('mgMeta').textContent = `OK: migradas ${n} linhas/ficheiros.`; $('mgJson').textContent = JSON.stringify(d, null, 2);
+  }catch(e){ $('mgMeta').textContent = 'Falha: '+e; }
+}
+
+/* ======================
+   INIT
+====================== */
+document.addEventListener('DOMContentLoaded', async () => {
+  // token
+  if ($('token')) { $('token').value = store.token; $('token').addEventListener('change', ()=> store.token = $('token').value); }
+  // intervalos
+  fillIntervals('fdInterval'); fillIntervals('trInterval');
+  // datas default (últimos 365d)
+  const today = new Date(); const yAgo = new Date(); yAgo.setDate(today.getDate()-365);
+  $('fdEnd').value = today.toISOString().slice(0,10); $('fdStart').value = yAgo.toISOString().slice(0,10);
+  // config
+  try{ const cfg = await (await fetch('/config')).json(); $('ver').textContent = 'v'+(cfg.version||''); if (!$('fdSymbol').value) $('fdSymbol').value = (cfg.symbol||'').toUpperCase(); if (!$('trSymbol').value) $('trSymbol').value = (cfg.symbol||'').toUpperCase(); }catch{}
+  // auto refresh métricas
+  const ar = $('autoref'); if (ar){ ar.addEventListener('change', (e)=>{ e.target.checked ? startAutoRefresh() : stopAutoRefresh(); }); if (ar.checked) startAutoRefresh(); }
+  // abas
+  const last = localStorage.getItem('ui.tab') || 'tab-dados'; showTab(last);
+  // métricas + portfólio + backtests guardados
+  loadMetrics(); loadPortfolio(); listBacktests(); toggleCancelBtn();
+});
+
+// erros globais
+window.addEventListener('error', e => console.error('window error', e.message, e.error));
+window.addEventListener('unhandledrejection', e => console.error('promise rejection', e.reason));
+</script>
+</body>
+</html>

@@ -1,43 +1,60 @@
-# safe-ai-trading-bot
+# AI Bot Starter — Guia Rápido
 
-// README (quick)
-// ----------------
-// 1) Create a new folder and copy these files (see below). 
-// 2) `python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`
-// 3) Create `.env` (see template in this file). 
-// 4) Run: `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
-// 5) Use the simple dashboard at http://localhost:8000 to Start/Stop the bot and view logs.
-// 6) Optional: `docker compose up --build`
-//
-// This skeleton mirrors the video’s flow but keeps everything safe and auditable. 
-// The worker is a placeholder that fetches public market data (no funds, no keys) until you swap in a legit API.
-// There are exactly TWO main actions: start() and stop().
+## Estrutura de dados
+```bash
+data/
+BTCUSDT/
+1m/
+2020.csv
+2021.csv
+5m/
+2020.csv
+models/
+gbm_BTCUSDT_1m_2017-2022.pkl
+metrics_summary.csv
+web/
+backtests/
+```
 
-/* ======================== NOTES: map to video steps ========================
-- “Install 2 extensions / dev mode”: here we skip any risky browser plugins. Use this audited API server instead.
-- “Paste script, check version at top”: BOT_VERSION controls compatibility banners; surfaced at / and /status.
-- “Green check in console”: If /status returns {running:true} after /start, you’re good.
-- “Connect extension / account shows up”: we use a token header. Treat that as your secure connection.
-- “Two functions only”: /start and /stop.
-- “Paste required amount”: DO NOT deposit funds into unknown scripts. Keep this bot on public/test data until you integrate a reputable API in code.
-- “Cloud upload”: Docker image → run on server/VPS.
-========================================================================== */
+## Download de dados
+- Garanta que grava por subpasta de timeframe: `data/{SYMBOL}/{INTERVAL}/{YYYY}.csv`.
+- Exemplo de função de gravação em `tools/save_prices.py`.
 
-/* ======================== HOW TO RUN (AI) ========================
-1) Fetch dados (testnet spot, 1m, 1000 candles):
-   python scripts/fetch_klines.py --symbol BTCUSDT --interval 1m --limit 1000 --outfile data/klines.csv --testnet
+## Executar
+```bash
+uvicorn app.main:app --reload
+# UI em http://localhost:8000/web/
+```
+## Treinar modelo (UI)
+	•	Abra o cartão Treinar modelo.
+	•	Escolha SYMBOL, INTERVAL, fonte de CSV (data/SYMBOL/INTERVAL/*.csv), date_from/date_to (janela de treino) e out_path (opcional).
+	•	Clique Treinar. Acompanhe percent/tempo.
+	•	No fim, o campo de Backtest “model_path” pode ser pré-preenchido.
 
-2) Gerar features + labels (horizon=10):
-   python scripts/make_features.py --klines data/klines.csv --outfile data/features.csv --horizon 10
+## Backtest (UI)
+	•	Strategy: AI (modelo) ou SMA.
+	•	csv_path/glob/dir com dados do período de teste (ex.: 2024).
+	•	date_from/date_to: delimitar período de teste.
+	•	model_path: ficheiro .pkl treinado antes do período de teste.
+	•	Correr backtest e ver equity/metrics.
 
-3) Treinar LightGBM e guardar modelo:
-   python scripts/train_lightgbm.py --features data/features.csv --model_out models/gbm.pkl
+## CLI (opcional)
 
-4) Ativar AI no runtime (no .env):
-   USE_AI=true
-   MODEL_PATH=models/gbm.pkl
-   BUY_THRESHOLD=0.55
-   SELL_THRESHOLD=0.55
+Se preferir CLI:
+```bash
+make retrain-multi SYMBOL=BTCUSDT INTERVAL=1m \
+  CSV="data/BTCUSDT/1m/*.csv" FROM=2017-01-01 TO=2023-01-01 \
+  OUT=models/gbm_BTCUSDT_1m_2017-2022.pkl
+```
 
-5) Reiniciar API e ver logs a emitir sinais por IA.
-================================================================== */
+## Boas práticas
+	•	Evitar leakage: treinar até T, testar depois de T.
+	•	Versionar modelos por símbolo/intervalo/janela.
+	•	Usar walk-forward para robustez.
+---
+
+## Notas finais
+
+- Com o **downloader** a guardar por `{symbol}/{interval}/`, a própria `_load_prices` já impede misturas.  
+- Com o **/train_run_async + UI**, passas a **conseguir fazer tudo pela interface**: treinar, apontar `model_path` e backtestar.  
+- Se quiseres, no próximo passo posso mandar-te um `app/train.py` de exemplo (scikit-learn + joblib) para teres um trainer Python direto (sem depender do Make), mas como já tens Make targets, o fallback de CLI já te serve hoje.
